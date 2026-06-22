@@ -96,10 +96,36 @@ class ElementService(ObjectService):
 
     @require_version("11.4")
     def delete_elements(
-        self, dimension_name: str, hierarchy_name: str, element_names: List[str] = None, use_ti: bool = False, **kwargs
+        self,
+        dimension_name: str,
+        hierarchy_name: str,
+        element_names: List[str] = None,
+        use_ti: bool = False,
+        use_blob: bool = False,
+        remove_blob: bool = True,
+        **kwargs,
     ):
+        """Delete elements from a hierarchy.
+
+        :param dimension_name: The name of the dimension.
+        :param hierarchy_name: The name of the hierarchy.
+        :param element_names: An iterable of element names to delete.
+        :param use_ti: Delete via an unbound TI process (subset + HierarchyDeleteElements).
+        :param use_blob: Delete via an uploaded CSV blob + unbound TI process. Requires admin
+            permissions. Better performance on large element sets. Returns None.
+        :param remove_blob: Remove the staged blob file after use (only with use_blob=True, default: True).
+        """
         if use_ti:
             return self.delete_elements_use_ti(dimension_name, hierarchy_name, element_names, **kwargs)
+
+        if use_blob:
+            return self.delete_elements_use_blob(
+                dimension_name=dimension_name,
+                hierarchy_name=hierarchy_name,
+                element_names=element_names,
+                remove_blob=remove_blob,
+                **kwargs,
+            )
 
         h_service = self._get_hierarchy_service()
         h = h_service.get(dimension_name, hierarchy_name, **kwargs)
@@ -126,6 +152,53 @@ class ElementService(ObjectService):
 
         finally:
             subset_service.delete(subset_name, dimension_name, hierarchy_name, private=False, **kwargs)
+
+    @require_data_admin
+    @require_ops_admin
+    @require_version(version="11.4")
+    def delete_elements_use_blob(
+        self,
+        dimension_name: str,
+        hierarchy_name: str,
+        element_names: List[str] = None,
+        remove_blob: bool = True,
+        **kwargs,
+    ):
+        """Delete elements from a hierarchy via an unbound TI process having an uploaded CSV as the data source.
+
+        Mirrors `delete_elements` but scales better to large element sets.
+
+        :param dimension_name: The name of the dimension.
+        :param hierarchy_name: The name of the hierarchy.
+        :param element_names: An iterable of element names to delete.
+        :param remove_blob: Remove the staged blob file after use (default: True).
+        :return: None
+        """
+        return self._run_blob_process(
+            rows=[[element_name] for element_name in element_names] if element_names else [],
+            build_process=lambda process_name, blob_filename: self._build_delete_elements_from_blob_process(
+                dimension_name=dimension_name,
+                hierarchy_name=hierarchy_name,
+                process_name=process_name,
+                blob_filename=blob_filename,
+            ),
+            remove_blob=remove_blob,
+            **kwargs,
+        )
+
+    def _build_delete_elements_from_blob_process(
+        self, dimension_name: str, hierarchy_name: str, process_name: str, blob_filename: str
+    ) -> Process:
+        element_variable = "vElement"
+        process = self._build_blob_datasource_process(
+            process_name=process_name,
+            blob_filename=blob_filename,
+            variables=[(element_variable, "String")],
+        )
+        process.metadata_procedure = (
+            f"HierarchyElementDelete('{dimension_name}','{hierarchy_name}',{element_variable});"
+        )
+        return process
 
     @require_version("11.4")
     def delete_edges(
@@ -1367,6 +1440,7 @@ class ElementService(ObjectService):
         dimension_name: str,
         hierarchy_name: str = None,
         edges: Dict[Tuple[str, str], int] = None,
+        use_ti: bool = False,
         use_blob: bool = False,
         remove_blob: bool = True,
         **kwargs,
@@ -1376,6 +1450,7 @@ class ElementService(ObjectService):
         :param dimension_name:
         :param hierarchy_name:
         :param edges: A dict mapping (parent, component) tuples to the edge weight.
+        :param use_ti: Add the edges via an unbound TI process (HierarchyElementComponentAdd). Returns None.
         :param use_blob: Add the edges via an uploaded CSV blob + unbound TI process. Requires admin
             permissions. Better performance on large edge sets. Returns None instead of a Response.
         :param remove_blob: Remove the staged blob file after use (only with use_blob=True, default: True).
@@ -1383,6 +1458,11 @@ class ElementService(ObjectService):
         """
         if not hierarchy_name:
             hierarchy_name = dimension_name
+
+        if use_ti:
+            return self.add_edges_use_ti(
+                dimension_name=dimension_name, hierarchy_name=hierarchy_name, edges=edges, **kwargs
+            )
 
         if use_blob:
             return self.add_edges_use_blob(
@@ -1400,6 +1480,37 @@ class ElementService(ObjectService):
         ]
 
         return self._rest.POST(url=url, data=json.dumps(body), **kwargs)
+
+    def add_edges_use_ti(
+        self, dimension_name: str, hierarchy_name: str = None, edges: Dict[Tuple[str, str], int] = None, **kwargs
+    ):
+        """Add edges to a hierarchy via an unbound TI process.
+
+        :param dimension_name: The name of the dimension.
+        :param hierarchy_name: The name of the hierarchy. Defaults to the dimension name.
+        :param edges: A dict mapping (parent, component) tuples to the edge weight.
+        :return: None
+        """
+        if not hierarchy_name:
+            hierarchy_name = dimension_name
+
+        def escape_single_quote(text):
+            return text.replace("'", "''")
+
+        statements = [
+            f"HierarchyElementComponentAdd('{dimension_name}','{hierarchy_name}',"
+            f"'{escape_single_quote(parent)}','{escape_single_quote(component)}',{float(weight)});"
+            for (parent, component), weight in (edges or {}).items()
+        ]
+        if not statements:
+            return
+
+        unbound_process_name = self.suggest_unique_object_name()
+        process_service = self._get_process_service()
+        process = Process(name=unbound_process_name, prolog_procedure="\r\n".join(statements))
+        success, status, error_log_file = process_service.execute_process_with_return(process, **kwargs)
+        if not success:
+            raise TM1pyException(f"Failed to add edges through unbound process. Error: '{error_log_file}'")
 
     @require_data_admin
     @require_ops_admin
@@ -1460,6 +1571,7 @@ class ElementService(ObjectService):
         dimension_name: str,
         hierarchy_name: str,
         elements: Iterable[Element],
+        use_ti: bool = False,
         use_blob: bool = False,
         remove_blob: bool = True,
         **kwargs,
@@ -1469,11 +1581,17 @@ class ElementService(ObjectService):
         :param dimension_name:
         :param hierarchy_name:
         :param elements:
+        :param use_ti: Add the elements via an unbound TI process (HierarchyElementInsert). Returns None.
         :param use_blob: Add the elements via an uploaded CSV blob + unbound TI process. Requires admin
             permissions. Better performance on large element sets. Returns None instead of a Response.
         :param remove_blob: Remove the staged blob file after use (only with use_blob=True, default: True).
         :return:
         """
+        if use_ti:
+            return self.add_elements_use_ti(
+                dimension_name=dimension_name, hierarchy_name=hierarchy_name, elements=elements, **kwargs
+            )
+
         if use_blob:
             return self.add_elements_use_blob(
                 dimension_name=dimension_name,
@@ -1487,6 +1605,35 @@ class ElementService(ObjectService):
         body = [element.body_as_dict for element in elements]
 
         return self._rest.POST(url=url, data=json.dumps(body), **kwargs)
+
+    def add_elements_use_ti(
+        self, dimension_name: str, hierarchy_name: str, elements: Iterable[Element] = None, **kwargs
+    ):
+        """Add elements to a hierarchy via an unbound TI process.
+
+        :param dimension_name: The name of the dimension.
+        :param hierarchy_name: The name of the hierarchy.
+        :param elements: An iterable of Element objects to add.
+        :return: None
+        """
+
+        def escape_single_quote(text):
+            return text.replace("'", "''")
+
+        statements = [
+            f"HierarchyElementInsert('{dimension_name}','{hierarchy_name}','',"
+            f"'{escape_single_quote(element.name)}','{str(element.element_type)[0]}');"
+            for element in (elements or [])
+        ]
+        if not statements:
+            return
+
+        unbound_process_name = self.suggest_unique_object_name()
+        process_service = self._get_process_service()
+        process = Process(name=unbound_process_name, prolog_procedure="\r\n".join(statements))
+        success, status, error_log_file = process_service.execute_process_with_return(process, **kwargs)
+        if not success:
+            raise TM1pyException(f"Failed to add elements through unbound process. Error: '{error_log_file}'")
 
     @require_data_admin
     @require_ops_admin

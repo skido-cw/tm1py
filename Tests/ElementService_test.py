@@ -1195,6 +1195,29 @@ class TestElementService(unittest.TestCase):
         self.assertEqual(edges[("New Cons", "Child A")], 1)
         self.assertEqual(edges[("New Cons", "Child B")], 2)
 
+    @skip_if_version_lower_than(version="11.4")
+    def test_add_elements_use_ti(self):
+        elements = [Element("ElementTI1", "Numeric"), Element("ConsTI", "Consolidated")]
+        self.tm1.elements.add_elements(self.dimension_name, self.hierarchy_name, elements, use_ti=True)
+
+        for element in elements:
+            self.assertEqual(element, self.tm1.elements.get(self.dimension_name, self.hierarchy_name, element.name))
+
+    @skip_if_version_lower_than(version="11.4")
+    def test_add_edges_use_ti(self):
+        self.tm1.elements.add_elements(
+            self.dimension_name, self.hierarchy_name, [Element("3000", "Numeric")], use_ti=True
+        )
+        self.tm1.elements.add_edges(
+            dimension_name=self.dimension_name,
+            hierarchy_name=self.hierarchy_name,
+            edges={("Total Years", "3000"): 1},
+            use_ti=True,
+        )
+
+        edges = self.tm1.elements.get_edges(self.dimension_name, self.hierarchy_name)
+        self.assertEqual(edges[("Total Years", "3000")], 1)
+
     def test_add_element_attributes_single(self):
         element_attribute = ElementAttribute(name="Attribute1", attribute_type="String")
         self.tm1.elements.add_element_attributes(self.dimension_name, self.dimension_name, [element_attribute])
@@ -1782,6 +1805,39 @@ class TestElementServiceBlobProcessBuilders(unittest.TestCase):
         result = service.add_edges("Dim", edges={("Total", "Child1"): 1}, use_blob=True)
         self.assertEqual(result, "BLOB")
         # hierarchy_name defaults to the dimension name before dispatch
+        self.assertEqual(captured["hierarchy_name"], "Dim")
+        self.assertEqual(captured["edges"], {("Total", "Child1"): 1})
+
+    def test_build_delete_elements_process(self):
+        service = self._element_service("12.0.0")
+        process = service._build_delete_elements_from_blob_process("Dim", "Dim", "p", "f.csv")
+        self.assertEqual([v["Name"] for v in process.variables], ["vElement"])
+        self.assertIn("HierarchyElementDelete('Dim','Dim',vElement);", process.metadata_procedure)
+
+    def test_delete_elements_dispatches_to_blob(self):
+        service = self._element_service("12.0.0")
+        captured = {}
+        service.delete_elements_use_blob = lambda **kwargs: captured.update(kwargs) or "BLOB"
+        result = service.delete_elements("Dim", "Dim", ["A", "B"], use_blob=True)
+        self.assertEqual(result, "BLOB")
+        self.assertEqual(captured["element_names"], ["A", "B"])
+        self.assertTrue(captured["remove_blob"])
+
+    def test_add_elements_dispatches_to_ti(self):
+        service = self._element_service("12.0.0")
+        captured = {}
+        service.add_elements_use_ti = lambda **kwargs: captured.update(kwargs) or "TI"
+        result = service.add_elements("Dim", "Dim", [Element("e", "Numeric")], use_ti=True)
+        self.assertEqual(result, "TI")
+        self.assertEqual(captured["dimension_name"], "Dim")
+        self.assertEqual(captured["hierarchy_name"], "Dim")
+
+    def test_add_edges_dispatches_to_ti(self):
+        service = self._element_service("12.0.0")
+        captured = {}
+        service.add_edges_use_ti = lambda **kwargs: captured.update(kwargs) or "TI"
+        result = service.add_edges("Dim", edges={("Total", "Child1"): 1}, use_ti=True)
+        self.assertEqual(result, "TI")
         self.assertEqual(captured["hierarchy_name"], "Dim")
         self.assertEqual(captured["edges"], {("Total", "Child1"): 1})
 
