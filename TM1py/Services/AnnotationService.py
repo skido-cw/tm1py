@@ -5,6 +5,7 @@ from typing import Iterable, List
 
 from requests import Response
 
+from TM1py.Exceptions import TM1pyRestException
 from TM1py.Objects.Annotation import Annotation
 from TM1py.Services.ObjectService import ObjectService
 from TM1py.Services.RestService import RestService
@@ -86,6 +87,33 @@ class AnnotationService(ObjectService):
         """
         url = format_url("/Annotations('{}')", annotation.id)
         return self._rest.PATCH(url=url, data=annotation.body, **kwargs)
+
+    def exists(self, annotation_id: str, **kwargs) -> bool:
+        """Check if an annotation exists on the TM1 Server through its unique id
+
+        :param annotation_id: string, the id of the annotation
+        :return: bool
+        """
+        url = format_url("/Annotations('{}')", annotation_id)
+        try:
+            self._rest.GET(url, **kwargs)
+            return True
+        except TM1pyRestException as e:
+            # the Annotations endpoint answers an unknown or malformed id with 404, or with
+            # 400 (e.g. ObjectNotFound / 'Invalid annotation id') depending on the TM1 version
+            if e.status_code in (400, 404):
+                return False
+            raise
+
+    def update_or_create(self, annotation: Annotation, **kwargs) -> Response:
+        """update if the annotation exists (by id), else create it
+
+        :param annotation: instance of TM1py.Annotation
+        :return: response
+        """
+        if annotation.id and self.exists(annotation.id, **kwargs):
+            return self.update(annotation, **kwargs)
+        return self.create(annotation, **kwargs)
 
     def delete(self, annotation_id: str, **kwargs) -> Response:
         """delete Annotation

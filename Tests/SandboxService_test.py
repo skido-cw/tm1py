@@ -228,6 +228,18 @@ class TestSandboxService(unittest.TestCase):
         queued = (self.tm1.sandboxes.get(self.sandbox_name3)).queued
         self.assertFalse(queued)
 
+    def test_update_or_create(self):
+        # create branch: sandbox2 does not exist yet
+        sandbox2 = Sandbox(self.sandbox_name2, include_in_sandbox_dimension=True)
+        self.tm1.sandboxes.update_or_create(sandbox2)
+        self.assertTrue(self.tm1.sandboxes.exists(self.sandbox_name2))
+        self.assertTrue(self.tm1.sandboxes.get(self.sandbox_name2).include_in_sandbox_dimension)
+
+        # update branch: sandbox2 now exists -> flip a property
+        sandbox2.include_in_sandbox_dimension = False
+        self.tm1.sandboxes.update_or_create(sandbox2)
+        self.assertFalse(self.tm1.sandboxes.get(self.sandbox_name2).include_in_sandbox_dimension)
+
     def tearDown(self):
         for sandbox_name in [self.sandbox_name1, self.sandbox_name2, self.sandbox_name3]:
             if self.tm1.sandboxes.exists(sandbox_name):

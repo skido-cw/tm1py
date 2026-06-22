@@ -146,6 +146,21 @@ class DimensionService(ObjectService):
         dimension_names = list(entry["Name"] for entry in response.json()["value"])
         return dimension_names
 
+    def get_all(self, skip_control_dims: bool = False, **kwargs) -> List[Dimension]:
+        """Get all dimensions from the TM1 Server as TM1py.Dimension instances
+
+        Retrieved in a single request with hierarchies (and their elements, edges and
+        attributes) expanded.
+
+        :param skip_control_dims: bool, True to skip control dimensions
+        :return: List of TM1py.Dimension instances
+        """
+        url = format_url(
+            "/{}?$expand=Hierarchies($expand=*)", "ModelDimensions()" if skip_control_dims else "Dimensions"
+        )
+        response = self._rest.GET(url, **kwargs)
+        return [Dimension.from_dict(dimension) for dimension in response.json()["value"]]
+
     def get_number_of_dimensions(self, skip_control_dims: bool = False, **kwargs) -> int:
         """Ask TM1 Server for number of dimensions
 

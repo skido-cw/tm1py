@@ -188,6 +188,21 @@ class TestDimensionService(unittest.TestCase):
             self.tm1.dimensions.get_all_names(), self.tm1.dimensions.get_all_names(skip_control_dims=True)
         )
 
+    def test_get_all(self):
+        dimensions = self.tm1.dimensions.get_all()
+        self.assertTrue(all(isinstance(dimension, Dimension) for dimension in dimensions))
+        names = [dimension.name for dimension in dimensions]
+        self.assertIn(self.dimension_name, names)
+        # returned Dimension objects are fully populated (hierarchies + elements)
+        retrieved = next(dimension for dimension in dimensions if dimension.name == self.dimension_name)
+        self.assertIn("Root", retrieved.get_hierarchy(self.hierarchy_name).elements)
+
+    def test_get_all_skip_control_dims(self):
+        all_names = [dimension.name for dimension in self.tm1.dimensions.get_all()]
+        model_names = [dimension.name for dimension in self.tm1.dimensions.get_all(skip_control_dims=True)]
+        self.assertIn(self.dimension_name, model_names)
+        self.assertNotEqual(all_names, model_names)
+
     def test_get_number_of_dimensions(self):
         number_of_dimensions = self.tm1.dimensions.get_number_of_dimensions()
         self.assertIsInstance(number_of_dimensions, int)

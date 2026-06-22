@@ -40,10 +40,10 @@ class JobService(ObjectService):
 
     @require_version(version="12.0.0")
     def cancel_all(self, **kwargs):
-        jobs = self.get_all()
+        jobs = self.get_all(**kwargs)
         canceled_jobs = list()
         for job in jobs:
-            self.cancel(job["ID"])
+            self.cancel(job["ID"], **kwargs)
             canceled_jobs.append(job)
         return canceled_jobs
 

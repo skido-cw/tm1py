@@ -64,6 +64,16 @@ class SandboxService(ObjectService):
         url = format_url("/Sandboxes('{}')", sandbox.name)
         return self._rest.PATCH(url=url, data=sandbox.body, **kwargs)
 
+    def update_or_create(self, sandbox: Sandbox, **kwargs) -> Response:
+        """update if exists, else create
+
+        :param sandbox: Sandbox
+        :return: response
+        """
+        if self.exists(sandbox.name, **kwargs):
+            return self.update(sandbox, **kwargs)
+        return self.create(sandbox, **kwargs)
+
     def delete(self, sandbox_name: str, **kwargs) -> Response:
         """delete a sandbox in TM1
 

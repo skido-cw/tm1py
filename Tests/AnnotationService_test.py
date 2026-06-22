@@ -159,6 +159,42 @@ class TestAnnotationService(unittest.TestCase):
         self.tm1.annotations.delete(annotation_id)
         self.assertLess(len(self.tm1.cubes.annotations.get_all(self.cube_name)), annotation_count)
 
+    def test_exists(self):
+        """
+        Check that exists is True for the test annotation and False once it has been deleted
+        """
+        self.assertTrue(self.tm1.cubes.annotations.exists(self.annotation_id))
+        self.tm1.cubes.annotations.delete(self.annotation_id)
+        self.assertFalse(self.tm1.cubes.annotations.exists(self.annotation_id))
+
+    def test_update_or_create_creates(self):
+        """
+        update_or_create on an annotation without an id creates a new annotation
+        """
+        annotation_count = len(self.tm1.cubes.annotations.get_all(self.cube_name))
+        random_intersection = self.tm1.cubes.get_random_intersection(self.cube_name, False)
+        random_text = "".join([random.choice(string.printable) for _ in range(100)])
+        annotation = Annotation(
+            comment_value=random_text, object_name=self.cube_name, dimensional_context=random_intersection
+        )
+
+        self.tm1.cubes.annotations.update_or_create(annotation)
+        self.assertEqual(len(self.tm1.cubes.annotations.get_all(self.cube_name)), annotation_count + 1)
+
+    def test_update_or_create_updates(self):
+        """
+        update_or_create on an existing annotation (by id) updates it rather than creating a new one
+        """
+        annotation = self.tm1.cubes.annotations.get(self.annotation_id)
+        annotation_count = len(self.tm1.cubes.annotations.get_all(self.cube_name))
+        new_random_text = "".join([random.choice(string.printable) for _ in range(100)])
+        annotation.comment_value = new_random_text
+
+        self.tm1.cubes.annotations.update_or_create(annotation)
+
+        self.assertEqual(len(self.tm1.cubes.annotations.get_all(self.cube_name)), annotation_count)
+        self.assertEqual(self.tm1.cubes.annotations.get(self.annotation_id).comment_value, new_random_text)
+
 
 if __name__ == "__main__":
     unittest.main()
